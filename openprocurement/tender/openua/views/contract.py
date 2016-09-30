@@ -37,12 +37,13 @@ class TenderUaAwardContractResource(TenderAwardContractResource):
             for new_contract in new_contracts:
                 # all new contracts must have status pending
                 if new_contract['status'] != 'pending' and new_contract not in prev_contracts:
-                    self.request.errors.add('body', 'data', 'All additional must have status pending')
+                    self.request.errors.add('body', 'data',
+                                            "Can't merge contract in status {}".format(new_contract['status']))
                     self.request.errors.status = 403
                     return
                 # Check if it exists and length > 0
                 if 'additionalAwardIDs' in new_contract and new_contract['additionalAwardIDs']:
-                    self.request.errors.add('body', 'data', "Can't merge contracts for contract which merge another id={}".format(new_contract['id']))
+                    self.request.errors.add('body', 'data', "Can't merge contract which has additionalAwardIDs")
                     self.request.errors.status = 403
                     return
 
