@@ -19,10 +19,49 @@ from openprocurement.api.validation import validate_patch_contract_data
             description="Tender contracts")
 class TenderUaAwardContractResource(TenderAwardContractResource):
 
+    def check_merged_contracts(self):
+        """ Set status pending and delete mergeInto for all previous merged contracts before
+            Set status merged and set mergeInto for all new contracts which awardID come in additionalAwardIDs """
+
+        contract = self.request.validated['contract']
+        data = self.request.validated['data']
+        tender = self.request.validated['tender']
+        if 'additionalAwardIDs' in contract:  # Get ids for all previos merged contracts
+            old_additional_award_ids = [additional_award_id['id'] for additional_award_id in contract.get('additionalAwardIDs', [])]
+            new_additional_award_ids = [additional_award_id['id'] for additional_award_id in data['additionalAwardIDs']]
+            prev_contracts = [prev_contract for prev_contract in tender['contracts'] if
+                              prev_contract['awardID'] in old_additional_award_ids]
+
+            new_contracts = [new_contract for new_contract in tender['contracts'] if
+                             new_contract['awardID'] in new_additional_award_ids]
+            for new_contract in new_contracts:
+                # all new contracts must have status pending
+                if new_contract['status'] != 'pending' and new_contract not in prev_contracts:
+                    self.request.errors.add('body', 'data', 'All additional must have status pending')
+                    self.request.errors.status = 403
+                    return
+                # Check if it exists and length > 0
+                if 'additionalAwardIDs' in new_contract and new_contract['additionalAwardIDs']:
+                    self.request.errors.add('body', 'data', "Can't merge contracts for contract which merge another id={}".format(new_contract['id']))
+                    self.request.errors.status = 403
+                    return
+
+            for prev_contract in prev_contracts:
+                prev_contract['status'] = 'pending'
+                del prev_contract['mergedInto']
+
+            for new_contract in new_contracts:
+                new_contract['status'] = 'merged'
+                new_contract['mergedInto'] = contract['id']
+
     @json_view(content_type="application/json", permission='edit_tender', validators=(validate_patch_contract_data,))
     def patch(self):
         """Update of contract
         """
+        if self.request.validated['contract']['status'] == 'merged':
+            self.request.errors.add('body', 'data', 'Can\'t update contract in current ({}) status'.format(self.request.validated['contract']['status']))
+            self.request.errors.status = 403
+            return
         if self.request.validated['tender_status'] not in ['active.qualification', 'active.awarded']:
             self.request.errors.add('body', 'data', 'Can\'t update contract in current ({}) tender status'.format(self.request.validated['tender_status']))
             self.request.errors.status = 403
