@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
+import unittest
 from datetime import timedelta
 from copy import deepcopy
 
-from openprocurement.api.models import get_now
-from openprocurement.api.constants import SANDBOX_MODE, CPV_ITEMS_CLASS_FROM
+from uuid import uuid4
 
+from openprocurement.api.models import get_now
+from openprocurement.api.constants import SANDBOX_MODE, CPV_ITEMS_CLASS_FROM, ROUTE_PREFIX, CPV_BLOCK_FROM
+from openprocurement.tender.core.constants import (
+    CANT_DELETE_PERIOD_START_DATE_FROM, CPV_ITEMS_CLASS_FROM,
+)
 from openprocurement.tender.belowthreshold.tests.base import test_organization, test_lots
 
 from openprocurement.tender.openua.models import Tender
+
 
 # Tender UA Test
 
@@ -31,6 +37,7 @@ def simple_add_tender(self):
     assert u.procurementMethodType == "aboveThresholdUA"
 
     u.delete_instance(self.db)
+
 
 # TenderUAResourceTest
 
@@ -249,9 +256,9 @@ def create_tender_invalid(self):
     ])
 
     self.initial_data['auctionPeriod'] = {'startDate': (now + timedelta(days=16)).isoformat(),
-                                         'endDate': (now + timedelta(days=16)).isoformat()}
+                                          'endDate': (now + timedelta(days=16)).isoformat()}
     self.initial_data['awardPeriod'] = {'startDate': (now + timedelta(days=15)).isoformat(),
-                                       'endDate': (now + timedelta(days=15)).isoformat()}
+                                        'endDate': (now + timedelta(days=15)).isoformat()}
     response = self.app.post_json(request_path, {'data': self.initial_data}, status=422)
     del self.initial_data['auctionPeriod']
     del self.initial_data['awardPeriod']
@@ -399,7 +406,6 @@ def create_tender_generated(self):
 
 
 def tender_fields(self):
-
     response = self.app.post_json('/tenders', {"data": self.initial_data})
     self.assertEqual(response.status, '201 Created')
     self.assertEqual(response.content_type, 'application/json')
@@ -552,7 +558,7 @@ def patch_tender(self):
     response = self.app.patch_json('/tenders/{}?acc_token={}'.format(tender['id'], owner_token),
                                    {'data': {'items': [{"additionalClassifications": [
                                        tender['items'][0]["additionalClassifications"][0] for i in range(3)
-                                       ]}]}})
+                                   ]}]}})
     self.assertEqual(response.status, '200 OK')
     self.assertEqual(response.content_type, 'application/json')
 
@@ -584,7 +590,8 @@ def patch_tender_period(self):
     dateModified = tender.pop('dateModified')
     self.tender_id = tender['id']
     self.go_to_enquiryPeriod_end()
-    response = self.app.patch_json('/tenders/{}?acc_token={}'.format(tender['id'], owner_token), {'data': {"description": "new description"}}, status=403)
+    response = self.app.patch_json('/tenders/{}?acc_token={}'.format(tender['id'], owner_token),
+                                   {'data': {"description": "new description"}}, status=403)
     self.assertEqual(response.status, '403 Forbidden')
     self.assertEqual(response.content_type, 'application/json')
     self.assertEqual(response.json['errors'][0]["description"], "tenderPeriod should be extended by 7 days")
@@ -852,13 +859,15 @@ def first_bid_tender(self):
     # create bid
     self.app.authorization = ('Basic', ('broker', ''))
     response = self.app.post_json('/tenders/{}/bids'.format(tender_id),
-                                  {'data': {'tenderers': [test_organization], "value": {"amount": 450}, 'selfEligible': True, 'selfQualified': True}})
+                                  {'data': {'tenderers': [test_organization], "value": {"amount": 450},
+                                            'selfEligible': True, 'selfQualified': True}})
     bid_id = response.json['data']['id']
     bid_token = response.json['access']['token']
     # create second bid
     self.app.authorization = ('Basic', ('broker', ''))
     response = self.app.post_json('/tenders/{}/bids'.format(tender_id),
-                                  {'data': {'tenderers': [test_organization], "value": {"amount": 475}, 'selfEligible': True, 'selfQualified': True}})
+                                  {'data': {'tenderers': [test_organization], "value": {"amount": 475},
+                                            'selfEligible': True, 'selfQualified': True}})
     # switch to active.auction
     self.set_status('active.auction')
 
@@ -874,12 +883,13 @@ def first_bid_tender(self):
                                            'bids': [
                                                {
                                                    'id': i['id'],
-                                                   'participationUrl': 'https://tender.auction.url/for_bid/{}'.format(i['id'])
+                                                   'participationUrl': 'https://tender.auction.url/for_bid/{}'.format(
+                                                       i['id'])
                                                }
                                                for i in auction_bids_data
                                            ]
                                        }
-    })
+                                   })
     # view bid participationUrl
     self.app.authorization = ('Basic', ('broker', ''))
     response = self.app.get('/tenders/{}/bids/{}?acc_token={}'.format(tender_id, bid_id, bid_token))
@@ -915,12 +925,15 @@ def first_bid_tender(self):
     # get pending award
     award_id = [i['id'] for i in response.json['data'] if i['status'] == 'pending'][0]
     # set award as active
-    self.app.patch_json('/tenders/{}/awards/{}?acc_token={}'.format(tender_id, award_id, owner_token), {"data": {"status": "active", "qualified": True, "eligible": True}})
+    self.app.patch_json('/tenders/{}/awards/{}?acc_token={}'.format(tender_id, award_id, owner_token),
+                        {"data": {"status": "active", "qualified": True, "eligible": True}})
     # get contract id
     response = self.app.get('/tenders/{}'.format(tender_id))
     contract_id = response.json['data']['contracts'][-1]['id']
     # create tender contract document for test
-    response = self.app.post('/tenders/{}/contracts/{}/documents?acc_token={}'.format(tender_id, contract_id, owner_token), upload_files=[('file', 'name.doc', 'content')], status=201)
+    response = self.app.post(
+        '/tenders/{}/contracts/{}/documents?acc_token={}'.format(tender_id, contract_id, owner_token),
+        upload_files=[('file', 'name.doc', 'content')], status=201)
     self.assertEqual(response.status, '201 Created')
     self.assertEqual(response.content_type, 'application/json')
     doc_id = response.json["data"]['id']
@@ -935,26 +948,36 @@ def first_bid_tender(self):
     self.db.save(tender)
     # sign contract
     self.app.authorization = ('Basic', ('broker', ''))
-    self.app.patch_json('/tenders/{}/contracts/{}?acc_token={}'.format(tender_id, contract_id, owner_token), {"data": {"status": "active"}})
+    self.app.patch_json('/tenders/{}/contracts/{}?acc_token={}'.format(tender_id, contract_id, owner_token),
+                        {"data": {"status": "active"}})
     # check status
     self.app.authorization = ('Basic', ('broker', ''))
     response = self.app.get('/tenders/{}'.format(tender_id))
     self.assertEqual(response.json['data']['status'], 'complete')
 
-    response = self.app.post('/tenders/{}/contracts/{}/documents?acc_token={}'.format(tender_id, contract_id, owner_token), upload_files=[('file', 'name.doc', 'content')], status=403)
+    response = self.app.post(
+        '/tenders/{}/contracts/{}/documents?acc_token={}'.format(tender_id, contract_id, owner_token),
+        upload_files=[('file', 'name.doc', 'content')], status=403)
     self.assertEqual(response.status, '403 Forbidden')
     self.assertEqual(response.content_type, 'application/json')
-    self.assertEqual(response.json['errors'][0]["description"], "Can't add document in current (complete) tender status")
+    self.assertEqual(response.json['errors'][0]["description"],
+                     "Can't add document in current (complete) tender status")
 
-    response = self.app.patch_json('/tenders/{}/contracts/{}/documents/{}?acc_token={}'.format(tender_id, contract_id, doc_id, owner_token), {"data": {"description": "document description"}}, status=403)
+    response = self.app.patch_json(
+        '/tenders/{}/contracts/{}/documents/{}?acc_token={}'.format(tender_id, contract_id, doc_id, owner_token),
+        {"data": {"description": "document description"}}, status=403)
     self.assertEqual(response.status, '403 Forbidden')
     self.assertEqual(response.content_type, 'application/json')
-    self.assertEqual(response.json['errors'][0]["description"], "Can't update document in current (complete) tender status")
+    self.assertEqual(response.json['errors'][0]["description"],
+                     "Can't update document in current (complete) tender status")
 
-    response = self.app.put('/tenders/{}/contracts/{}/documents/{}?acc_token={}'.format(tender_id, contract_id, doc_id, owner_token), upload_files=[('file', 'name.doc', 'content3')], status=403)
+    response = self.app.put(
+        '/tenders/{}/contracts/{}/documents/{}?acc_token={}'.format(tender_id, contract_id, doc_id, owner_token),
+        upload_files=[('file', 'name.doc', 'content3')], status=403)
     self.assertEqual(response.status, '403 Forbidden')
     self.assertEqual(response.content_type, 'application/json')
-    self.assertEqual(response.json['errors'][0]["description"], "Can't update document in current (complete) tender status")
+    self.assertEqual(response.json['errors'][0]["description"],
+                     "Can't update document in current (complete) tender status")
 
 
 def lost_contract_for_active_award(self):

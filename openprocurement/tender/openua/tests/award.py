@@ -42,6 +42,7 @@ from openprocurement.tender.openua.tests.award_blanks import (
     # Tender2LotAwardResourceTest
     create_tender_lots_award,
     patch_tender_lots_award,
+    cancel_merged_award,
     # TenderAwardComplaintResourceTest
     create_tender_award_claim,
     create_tender_award_complaint_not_active,
@@ -101,6 +102,7 @@ class Tender2LotAwardResourceTest(BaseTenderUAContentWebTest):
 
     test_create_tender_lots_award = snitch(create_tender_lots_award)
     test_patch_tender_lots_award = snitch(patch_tender_lots_award)
+    test_cancel_merged_award = snitch(cancel_merged_award)
 
 
 class TenderAwardComplaintResourceTest(BaseTenderUAContentWebTest,

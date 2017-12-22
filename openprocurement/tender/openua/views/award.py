@@ -5,6 +5,12 @@ from openprocurement.tender.core.validation import (
     validate_update_award_in_not_allowed_status,
     validate_update_award_with_accepted_complaint
 )
+
+from openprocurement.tender.belowthreshold.validation import (
+    validate_create_award_only_for_active_lot,
+    validate_create_award_not_in_allowed_period,
+    validate_cancel_award_of_merged_contracts
+)
 from openprocurement.tender.belowthreshold.views.award import TenderAwardResource
 from openprocurement.api.utils import (
     json_view,
@@ -23,15 +29,24 @@ from openprocurement.tender.openua.utils import (
     add_next_award, calculate_normalized_date
 )
 
+
+def set_pending(contracts):
+    """ Set status pending and delete mergedInto in contracts """
+    for contract in contracts:
+        contract['status'] = 'pending'
+        del contract['mergedInto']
+
+
 @optendersresource(name='aboveThresholdUA:Tender Awards',
                    collection_path='/tenders/{tender_id}/awards',
                    path='/tenders/{tender_id}/awards/{award_id}',
                    description="Tender awards",
                    procurementMethodType='aboveThresholdUA')
 class TenderUaAwardResource(TenderAwardResource):
-
-    @json_view(content_type="application/json", permission='edit_tender', validators=(validate_patch_award_data, validate_update_award_in_not_allowed_status,
-               validate_update_award_only_for_active_lots, validate_update_award_with_accepted_complaint))
+    @json_view(content_type="application/json", permission='edit_tender',
+               validators=(validate_patch_award_data, validate_update_award_in_not_allowed_status,
+                           validate_update_award_only_for_active_lots, validate_update_award_with_accepted_complaint,
+                           validate_cancel_award_of_merged_contracts))
     def patch(self):
         """Update of award
 
@@ -101,10 +116,12 @@ class TenderUaAwardResource(TenderAwardResource):
                 'awardID': award.id,
                 'suppliers': award.suppliers,
                 'value': award.value,
-                'items': [i for i in tender.items if i.relatedLot == award.lotID ],
-                'contractID': '{}-{}{}'.format(tender.tenderID, self.server_id, len(tender.contracts) +1) }))
-            add_next_award(self.request, reverse=configurator.reverse_awarding_criteria, awarding_criteria_key=configurator.awarding_criteria_key)
-        elif award_status == 'active' and award.status == 'cancelled' and any([i.status == 'satisfied' for i in award.complaints]):
+                'items': [i for i in tender.items if i.relatedLot == award.lotID],
+                'contractID': '{}-{}{}'.format(tender.tenderID, self.server_id, len(tender.contracts) + 1)}))
+            add_next_award(self.request, reverse=configurator.reverse_awarding_criteria,
+                           awarding_criteria_key=configurator.awarding_criteria_key)
+        elif award_status == 'active' and award.status == 'cancelled' and any(
+                [i.status == 'satisfied' for i in award.complaints]):
             now = get_now()
             cancelled_awards = []
             for i in tender.awards:
@@ -117,20 +134,29 @@ class TenderUaAwardResource(TenderAwardResource):
             for i in tender.contracts:
                 if i.awardID in cancelled_awards:
                     i.status = 'cancelled'
-            add_next_award(self.request, reverse=configurator.reverse_awarding_criteria, awarding_criteria_key=configurator.awarding_criteria_key)
+            add_next_award(self.request, reverse=configurator.reverse_awarding_criteria,
+                           awarding_criteria_key=configurator.awarding_criteria_key)
         elif award_status == 'active' and award.status == 'cancelled':
             now = get_now()
             if award.complaintPeriod.endDate > now:
                 award.complaintPeriod.endDate = now
             for i in tender.contracts:
-                if i.awardID == award.id:
+                if i.awardID == award.id and 'additionalAwardIDs' in i:  # if cancelled contract has additionalAwardIDs:
+                    set_pending((
+                        contract for contract in tender.contracts if contract['awardID'] in i['additionalAwardIDs']
+                    ))
+                    del i['additionalAwardIDs']  # delete additionalAwardIDs from cancelled contract
                     i.status = 'cancelled'
-            add_next_award(self.request, reverse=configurator.reverse_awarding_criteria, awarding_criteria_key=configurator.awarding_criteria_key)
+                    break
+            add_next_award(self.request, reverse=configurator.reverse_awarding_criteria,
+                           awarding_criteria_key=configurator.awarding_criteria_key)
         elif award_status == 'pending' and award.status == 'unsuccessful':
             normalized_end = calculate_normalized_date(get_now(), tender, True)
             award.complaintPeriod.endDate = calculate_business_date(normalized_end, STAND_STILL_TIME, tender)
-            add_next_award(self.request, reverse=configurator.reverse_awarding_criteria, awarding_criteria_key=configurator.awarding_criteria_key)
-        elif award_status == 'unsuccessful' and award.status == 'cancelled' and any([i.status == 'satisfied' for i in award.complaints]):
+            add_next_award(self.request, reverse=configurator.reverse_awarding_criteria,
+                           awarding_criteria_key=configurator.awarding_criteria_key)
+        elif award_status == 'unsuccessful' and award.status == 'cancelled' and any(
+                [i.status == 'satisfied' for i in award.complaints]):
             if tender.status == 'active.awarded':
                 tender.status = 'active.qualification'
                 tender.awardPeriod.endDate = None
@@ -148,10 +174,12 @@ class TenderUaAwardResource(TenderAwardResource):
             for i in tender.contracts:
                 if i.awardID in cancelled_awards:
                     i.status = 'cancelled'
-            add_next_award(self.request, reverse=configurator.reverse_awarding_criteria, awarding_criteria_key=configurator.awarding_criteria_key)
-        elif self.request.authenticated_role != 'Administrator' and not(award_status == 'pending' and award.status == 'pending'):
+            add_next_award(self.request, reverse=configurator.reverse_awarding_criteria,
+                           awarding_criteria_key=configurator.awarding_criteria_key)
+        elif self.request.authenticated_role != 'Administrator' and not (
+                        award_status == 'pending' and award.status == 'pending'):
             raise_operation_error(self.request, 'Can\'t update award in current ({}) status'.format(award_status))
         if save_tender(self.request):
             self.LOGGER.info('Updated tender award {}'.format(self.request.context.id),
-                        extra=context_unpack(self.request, {'MESSAGE_ID': 'tender_award_patch'}))
+                             extra=context_unpack(self.request, {'MESSAGE_ID': 'tender_award_patch'}))
             return {'data': award.serialize("view")}
